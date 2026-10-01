@@ -6,7 +6,7 @@ from pyrogram import enums, errors, types
 
 from BOMMYMUSIC.misc import db
 from BOMMYMUSIC.utils import deck_style
-from BOMMYMUSIC.utils.cards import now_playing_card
+from BOMMYMUSIC.utils.cards import now_playing_card, queue_added_card
 from BOMMYMUSIC.utils.database import get_lang
 from BOMMYMUSIC.utils.formatters import seconds_to_min
 from strings import get_string
@@ -318,9 +318,13 @@ def _queue_extras(_, chat_id, qid):
     return _html_caption_to_blocks("\n".join(lines))
 
 
-def build_queue_blocks(_, caption_html, chat_id, qid):
-    blocks = _html_caption_to_blocks(caption_html)
-    blocks += _queue_extras(_, chat_id, qid)
+def build_queue_blocks(_, caption_html, chat_id, qid, photo=None):
+    blocks = []
+    if photo:  # the ticket image already shows lane + ETA
+        blocks.append(types.InputRichBlockPhoto(photo=types.InputMediaPhoto(photo)))
+    blocks += _html_caption_to_blocks(caption_html)
+    if not photo:
+        blocks += _queue_extras(_, chat_id, qid)
     blocks.append(
         types.InputRichBlockButtons(
             buttons=[
@@ -355,7 +359,12 @@ async def send_queue_rich(
     client, chat_id, target_chat_id, caption_html, qid, replace=None
 ):
     _ = await _lang(chat_id)
-    blocks = build_queue_blocks(_, caption_html, chat_id, qid)
+    photo = None
+    tracks = db.get(chat_id) or []
+    index = next((i for i, t in enumerate(tracks) if i > 0 and t.get("qid") == qid), None)
+    if index is not None:
+        photo = await queue_added_card(tracks[index], index, deck_style.eta_seconds(tracks, index))
+    blocks = build_queue_blocks(_, caption_html, chat_id, qid, photo)
     return await _deliver(client, target_chat_id, blocks, replace)
 
 
