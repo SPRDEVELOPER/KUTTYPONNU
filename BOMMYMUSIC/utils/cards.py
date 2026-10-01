@@ -579,6 +579,36 @@ def _cover_tile(path, size, radius, seed, accent):
     return out, _rr_mask(size, size, radius)
 
 
+def _heart_mask(size, ss=4):
+    """Anti-aliased heart shape (parametric curve) filling a size x size box."""
+    n = size * ss
+    pts = []
+    for i in range(361):
+        t = math.radians(i)
+        x = 16 * math.sin(t) ** 3
+        y = 13 * math.cos(t) - 5 * math.cos(2 * t) - 2 * math.cos(3 * t) - math.cos(4 * t)
+        pts.append((n * (0.5 + x / 35.0), n * (0.47 - y / 35.0)))
+    big = Image.new("L", (n, n), 0)
+    ImageDraw.Draw(big).polygon(pts, fill=255)
+    return big.resize((size, size), LANCZOS)
+
+
+def _heart_tile(path, size, seed, accent):
+    """Cover art cut into a heart, with a soft accent outline."""
+    try:
+        tile = _cover(_open(path), size, size) if path and os.path.isfile(str(path)) else None
+    except Exception:
+        tile = None
+    if tile is None:
+        tile = _placeholder(size, seed, accent)
+    mask = _heart_mask(size)
+    out = Image.new("RGB", (size, size), (0, 0, 0))
+    out.paste(tile, (0, 0))
+    ring = ImageChops.subtract(mask.filter(ImageFilter.MaxFilter(5)), _scale_mask(mask, 1.0))
+    out.paste(Image.new("RGB", (size, size), accent), (0, 0), ring)
+    return out, ImageChops.lighter(mask, ring)
+
+
 def _glass(base, box, radius, accent=None, strong=False):
     _shadow(base, box, radius, blur=16, offset=(0, 8), alpha=0.35)
     _rounded(base, box, radius, (255, 255, 255), alpha=0.13 if strong else 0.08)
@@ -686,10 +716,10 @@ def _render_queue(tracks, covers, out_path):
         d.ellipse([rail_x - 11, cy - 11, rail_x + 11, cy + 11], fill=(12, 16, 26, 255), outline=accent + (255,), width=3)
         d.ellipse([rail_x - 4, cy - 4, rail_x + 4, cy + 4], fill=accent + (255,))
         _num(d, (L + 26, cy + 17), f"{i + 1:02d}", 46, accent + (240,), stroke=2)
-        tile, tmask = _cover_tile(covers.get(i + 1), 68, 16, track.get("vidid") or track.get("title"), accent)
-        base.paste(tile, (L + 112, y0 + 14), tmask)
+        tile, tmask = _heart_tile(covers.get(i + 1), 76, track.get("vidid") or track.get("title"), accent)
+        base.paste(tile, (L + 108, y0 + 10), tmask)
         d = ImageDraw.Draw(base, "RGBA")
-        dx = L + 112 + 68 + 26
+        dx = L + 108 + 76 + 24
         right_block = 150
         tf = _font(_BOLD, 29)
         d.text((dx, cy - 4), _fit(_clean(track.get("title"), "Unknown Track"), tf, R - dx - right_block - 20), font=tf, fill=(255, 255, 255, 255), anchor="ls")
@@ -734,6 +764,126 @@ async def queue_card(chat_id, tracks):
         out = os.path.join(CACHE_DIR, f"queue_{str(chat_id).replace('-', 'm')}.jpg")
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, _render_queue, [dict(t) for t in tracks], covers, out)
+        return out
+    except Exception:
+        return None
+
+
+# ── "added to queue" ticket ──────────────────────────────────────────────────
+def _render_ticket(cover, title, by, position, eta, dur, vidid, out_path):
+    W, H = 1280, 580
+    art = _open(cover) if cover and os.path.isfile(str(cover)) else None
+    accent = _accent(art) if art else BRAND
+    base = _backdrop(art, (W, H), 0.38) if art else Image.new("RGB", (W, H), (12, 16, 26))
+    base.paste(Image.new("RGB", (W, H), (6, 8, 14)), (0, 0), _scale_mask(_gradient((W, H), True), 0.5))
+    _vignette(base, 0.6)
+
+    title = _clean(title, "Unknown Track")
+    by = _clean(by, "Unknown")
+
+    # heart cover with glow + shadow
+    hs, hx, hy = 400, 70, 90
+    _glow(base, (hx + hs // 2, hy + hs // 2), 330, accent, 0.45)
+    heart, hmask = _heart_tile(cover, hs, vidid or title, accent)
+    sh = hmask.filter(ImageFilter.GaussianBlur(18))
+    _paste_color(base, (hx + 6, hy + 22), (0, 0, 0), sh, 0.7)
+    base.paste(heart, (hx, hy), hmask)
+
+    d = ImageDraw.Draw(base, "RGBA")
+    # ticket perforation
+    px = 520
+    for y in range(34, H - 20, 26):
+        d.rounded_rectangle([px - 2, y, px + 2, y + 12], radius=2, fill=(255, 255, 255, 70))
+    for cy in (0, H):
+        d.ellipse([px - 24, cy - 24, px + 24, cy + 24], fill=(6, 8, 14, 255))
+
+    tx, right = 580, W - 64
+    pf = _font(_BOLD, 19)
+    label = "ADDED TO QUEUE"
+    pw = int(_tracked_width(label, pf, 4) + 78)
+    _rounded(base, (tx, 58, tx + pw, 58 + 46), 23, accent)
+    _eq_icon(base, tx + 22, 58 + 31, INK + (255,))
+    d = ImageDraw.Draw(base, "RGBA")
+    _tracked(d, (tx + 54, 58 + 31), label, pf, INK + (255,), 4)
+    _num(d, (right, 160), f"#{position}", 130, accent + (255,), anchor="rs", stroke=3)
+
+    font, size, lines = _title_lines(title, right - tx)
+    if size > 46:
+        font, size = _font(_BOLD, 46), 46
+        lines = _wrap(title, font, right - tx, 2)
+    y = 214
+    for line in lines[:2]:
+        d.text((tx, y), line, font=font, fill=(255, 255, 255, 255), anchor="ls")
+        y += int(size * 1.15)
+
+    y += 2
+    d.ellipse([tx, y, tx + 42, y + 42], fill=accent + (255,))
+    d.text((tx + 21, y + 29), _initial(by), font=_font(_BOLD, 24), fill=INK + (255,), anchor="ms")
+    d.text((tx + 56, y + 17), "requested by", font=_font(_LIGHT, 19), fill=(255, 255, 255, 150), anchor="ls")
+    nf = _font(_BOLD, 22)
+    d.text((tx + 56, y + 40), _fit(by, nf, 420), font=nf, fill=(255, 255, 255, 235), anchor="ls")
+
+    # plays-in + duration
+    ey = 456
+    if eta:
+        _tracked(d, (tx, ey - 30), "PLAYS IN", _font(_BOLD, 15), (255, 255, 255, 150), 4)
+        _num(d, (tx, ey + 18), eta, 54, (255, 255, 255, 255), stroke=2)
+    if dur:
+        dl = _tracked_width("DURATION", _font(_BOLD, 15), 4)
+        _tracked(d, (right - dl, ey - 30), "DURATION", _font(_BOLD, 15), (255, 255, 255, 150), 4)
+        _num(d, (right, ey + 18), _short(dur), 54, accent + (255,), anchor="rs", stroke=2)
+
+    # lane: now -> stops -> yours
+    ly = 508
+    between = max(int(position) - 1, 0)
+    shown = min(between, 5)
+    n = shown + 2
+    xs = [tx + 14 + i * ((right - tx - 60) / max(n - 1, 1)) for i in range(n)]
+    d.line([(xs[0], ly), (xs[-1], ly)], fill=(255, 255, 255, 60), width=4)
+    d.ellipse([xs[0] - 13, ly - 13, xs[0] + 13, ly + 13], fill=accent + (255,))
+    d.ellipse([xs[0] - 5, ly - 5, xs[0] + 5, ly + 5], fill=INK + (255,))
+    for x in xs[1:-1]:
+        d.ellipse([x - 8, ly - 8, x + 8, ly + 8], fill=(12, 16, 26, 255), outline=(255, 255, 255, 150), width=3)
+    if between > shown:
+        d.text(((xs[-2] + xs[-1]) / 2, ly - 16), f"+{between - shown}", font=_font(_BOLD, 17), fill=(255, 255, 255, 170), anchor="ms")
+    hm = _heart_mask(46)
+    _glow(base, (int(xs[-1]), ly), 50, accent, 0.6)
+    _paste_color(base, (int(xs[-1]) - 23, ly - 23), accent, hm)
+    d = ImageDraw.Draw(base, "RGBA")
+    lf = _font(_BOLD, 14)
+    _tracked(d, (xs[0] - 12, ly + 36), "NOW", lf, (255, 255, 255, 150), 4)
+    tw = _tracked_width("YOURS", lf, 4)
+    _tracked(d, (xs[-1] + 24 - tw, ly + 36), "YOURS", lf, accent + (255,), 4)
+    _brand(base, right, 40, alpha=110)
+
+    tmp = out_path + ".tmp"
+    base.save(tmp, format="JPEG", quality=90, optimize=True)
+    os.replace(tmp, out_path)
+
+
+async def queue_added_card(track, position, wait_seconds=None):
+    """Ticket image for a track that was just added to the queue (or None)."""
+    try:
+        from BOMMYMUSIC.utils.deck_style import fmt_time
+        from BOMMYMUSIC.utils.thumbnails import get_thumb
+
+        vid = str(track.get("vidid") or "")
+        cover = None
+        if vid and vid not in ("telegram", "soundcloud") and "." not in vid and "/" not in vid:
+            try:
+                cover = await asyncio.wait_for(get_thumb(vid), timeout=6)
+            except Exception:
+                cover = None
+        eta = fmt_time(wait_seconds) if wait_seconds is not None else ""
+        key = f"{vid}|{track.get('title')}|{track.get('by')}|{position}|{eta}"
+        out = os.path.join(CACHE_DIR, f"qa_{hashlib.sha1(key.encode()).hexdigest()[:16]}.jpg")
+        os.makedirs(CACHE_DIR, exist_ok=True)
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(
+            None, _render_ticket, cover, track.get("title"), track.get("by"),
+            position, eta, track.get("dur"), vid, out,
+        )
+        _prune(os.path.join(CACHE_DIR, "qa_*.jpg"), 40)
         return out
     except Exception:
         return None
