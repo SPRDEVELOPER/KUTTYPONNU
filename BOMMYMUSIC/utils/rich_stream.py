@@ -311,11 +311,11 @@ def _queue_extras(_, chat_id, qid):
     index = next((i for i, t in enumerate(tracks) if i > 0 and t.get("qid") == qid), None)
     if index is None:
         return []
-    lines = ["", deck_style.queue_lane(index)]
+    line = deck_style.queue_lane(index)
     wait = deck_style.eta_seconds(tracks, index)
     if wait is not None:
-        lines.append(_.get("RICH_ETA", "⏳ ᴘʟᴀʏs ɪɴ · ~{0}").format(deck_style.fmt_time(wait)))
-    return _html_caption_to_blocks("\n".join(lines))
+        line += "  ·  " + _.get("RICH_ETA", "⏳ ~{0}").format(deck_style.fmt_time(wait))
+    return _html_caption_to_blocks(line)
 
 
 def build_queue_blocks(_, caption_html, chat_id, qid, photo=None):
@@ -325,28 +325,23 @@ def build_queue_blocks(_, caption_html, chat_id, qid, photo=None):
     blocks += _html_caption_to_blocks(caption_html)
     if not photo:
         blocks += _queue_extras(_, chat_id, qid)
+    default = enums.ButtonStyle.DEFAULT
     blocks.append(
         types.InputRichBlockButtons(
             buttons=[
                 types.RichMessageButton(
                     text=_["RICH_BTN_PLAYNOW"],
-                    style=enums.ButtonStyle.SUCCESS,
+                    style=default,
                     callback_data=f"ADMIN PlayNow|{chat_id}_{qid}",
                 ),
-            ]
-        )
-    )
-    blocks.append(
-        types.InputRichBlockButtons(
-            buttons=[
                 types.RichMessageButton(
                     text=_["RICH_BTN_SKIP"],
-                    style=enums.ButtonStyle.PRIMARY,
+                    style=default,
                     callback_data=f"ADMIN Skip|{chat_id}",
                 ),
                 types.RichMessageButton(
                     text=_["RICH_BTN_END"],
-                    style=enums.ButtonStyle.DANGER,
+                    style=default,
                     callback_data=f"ADMIN Stop|{chat_id}",
                 ),
             ]
