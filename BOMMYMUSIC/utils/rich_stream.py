@@ -6,7 +6,7 @@ from pyrogram import enums, errors, types
 
 from BOMMYMUSIC.misc import db
 from BOMMYMUSIC.utils import deck_style
-from BOMMYMUSIC.utils.cards import now_playing_card, queue_added_card
+from BOMMYMUSIC.utils.cards import now_playing_card
 from BOMMYMUSIC.utils.database import get_lang
 from BOMMYMUSIC.utils.formatters import seconds_to_min
 from strings import get_string
@@ -311,37 +311,38 @@ def _queue_extras(_, chat_id, qid):
     index = next((i for i, t in enumerate(tracks) if i > 0 and t.get("qid") == qid), None)
     if index is None:
         return []
-    line = deck_style.queue_lane(index)
+    lines = ["", deck_style.queue_lane(index)]
     wait = deck_style.eta_seconds(tracks, index)
     if wait is not None:
-        line += "  ·  " + _.get("RICH_ETA", "⏳ ~{0}").format(deck_style.fmt_time(wait))
-    return _html_caption_to_blocks(line)
+        lines.append(_.get("RICH_ETA", "⏳ ᴘʟᴀʏs ɪɴ · ~{0}").format(deck_style.fmt_time(wait)))
+    return _html_caption_to_blocks("\n".join(lines))
 
 
-def build_queue_blocks(_, caption_html, chat_id, qid, photo=None):
-    blocks = []
-    if photo:  # the ticket image already shows lane + ETA
-        blocks.append(types.InputRichBlockPhoto(photo=types.InputMediaPhoto(photo)))
-    blocks += _html_caption_to_blocks(caption_html)
-    if not photo:
-        blocks += _queue_extras(_, chat_id, qid)
-    default = enums.ButtonStyle.DEFAULT
+def build_queue_blocks(_, caption_html, chat_id, qid):
+    blocks = _html_caption_to_blocks(caption_html)
+    blocks += _queue_extras(_, chat_id, qid)
     blocks.append(
         types.InputRichBlockButtons(
             buttons=[
                 types.RichMessageButton(
                     text=_["RICH_BTN_PLAYNOW"],
-                    style=default,
+                    style=enums.ButtonStyle.SUCCESS,
                     callback_data=f"ADMIN PlayNow|{chat_id}_{qid}",
                 ),
+            ]
+        )
+    )
+    blocks.append(
+        types.InputRichBlockButtons(
+            buttons=[
                 types.RichMessageButton(
                     text=_["RICH_BTN_SKIP"],
-                    style=default,
+                    style=enums.ButtonStyle.PRIMARY,
                     callback_data=f"ADMIN Skip|{chat_id}",
                 ),
                 types.RichMessageButton(
                     text=_["RICH_BTN_END"],
-                    style=default,
+                    style=enums.ButtonStyle.DANGER,
                     callback_data=f"ADMIN Stop|{chat_id}",
                 ),
             ]
@@ -354,12 +355,7 @@ async def send_queue_rich(
     client, chat_id, target_chat_id, caption_html, qid, replace=None
 ):
     _ = await _lang(chat_id)
-    photo = None
-    tracks = db.get(chat_id) or []
-    index = next((i for i, t in enumerate(tracks) if i > 0 and t.get("qid") == qid), None)
-    if index is not None:
-        photo = await queue_added_card(tracks[index], index, deck_style.eta_seconds(tracks, index))
-    blocks = build_queue_blocks(_, caption_html, chat_id, qid, photo)
+    blocks = build_queue_blocks(_, caption_html, chat_id, qid)
     return await _deliver(client, target_chat_id, blocks, replace)
 
 
